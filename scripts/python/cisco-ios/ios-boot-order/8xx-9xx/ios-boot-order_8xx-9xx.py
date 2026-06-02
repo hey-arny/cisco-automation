@@ -69,6 +69,10 @@ def load_hosts():
     """
     hosts = []
 
+    if not os.path.exists(HOSTS_FILE):
+        open(HOSTS_FILE, "w").close()
+        print("Created {}.".format(HOSTS_FILE))
+
     if os.path.exists(HOSTS_FILE):
         with open(HOSTS_FILE, "r") as f:
             for line in f:

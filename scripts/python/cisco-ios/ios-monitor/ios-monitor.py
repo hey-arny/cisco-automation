@@ -201,6 +201,13 @@ def make_dir(path):
         os.makedirs(path)
 
 
+def ensure_hosts_file():
+    if not os.path.exists(HOSTS_FILE):
+        open(HOSTS_FILE, "w").close()
+        print("Created %s. Add device IP addresses and run the script again." % HOSTS_FILE)
+        sys.exit(1)
+
+
 def ping_host(ip):
     devnull = open(os.devnull, "w")
     try:
@@ -608,9 +615,7 @@ def main():
     global username
     global password
 
-    if not os.path.exists(HOSTS_FILE):
-        print("Missing %s" % HOSTS_FILE)
-        sys.exit(1)
+    ensure_hosts_file()
     
     username = input("Enter username: ").strip()
     password = getpass("Password: ")

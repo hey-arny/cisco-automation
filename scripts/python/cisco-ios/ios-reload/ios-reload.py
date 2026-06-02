@@ -144,20 +144,19 @@ password = getpass("Password: ")
 make_dir(LOG_DIR)
 make_dir(os.path.join(LOG_DIR, "sessions"))
 
-try:
-    hosts = []
-
-    with open(HOSTS_FILE, "r") as f:
-        for line in f:
-            ip = line.strip()
-
-            if ip and not ip.startswith("#"):
-                hosts.append(ip)
-
-except IOError:
-    print("ERROR: File %s was not found." % HOSTS_FILE)
+if not os.path.exists(HOSTS_FILE):
+    open(HOSTS_FILE, "w").close()
+    print("Created %s. Add device IP addresses and run the script again." % HOSTS_FILE)
     raise SystemExit
 
+hosts = []
+
+with open(HOSTS_FILE, "r") as f:
+    for line in f:
+        ip = line.strip()
+
+        if ip and not ip.startswith("#"):
+            hosts.append(ip)
 
 if not hosts:
     print("ERROR: No hosts found in %s." % HOSTS_FILE)
