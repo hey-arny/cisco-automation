@@ -16,10 +16,10 @@ import time
 # =========================
 
 HOSTS_FILE = "hosts.txt"
-
 LOG_DIR = "logs"
 
-
+# If True, and all conditions are passed --> script will reload the device! 
+# with False boolean variable script works just as pre-check!  
 RELOAD_ENABLED = False
 
 # Supported boot maps
@@ -29,7 +29,7 @@ LATEST_BOOT = {
     "C931-4P":    "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
 }
 
-# Expected byte size of each newest image in flash.
+# Expected byte size of each newest image in flash. 
 LATEST_IMAGE_SIZE = {
     "c800-universalk9-mz.SPA.159-3.M13.bin": 97436536,
     "c900-universalk9-mz.SPA.159-3.M13.bin": 65946792,
