@@ -28,6 +28,12 @@ EXPECTED_IMAGES = {
     "900": "c900-universalk9-mz.SPA.159-3.M13.bin",
 }
 
+# Expected byte size of each newest image in flash.
+EXPECTED_IMAGE_SIZE = {
+    "c800-universalk9-mz.SPA.159-3.M13.bin": 97436536,
+    "c900-universalk9-mz.SPA.159-3.M13.bin": 65946792,
+}
+
 DEVICE_TYPE = "cisco_ios"
 
 HOSTS_FILE = "hosts.txt"
@@ -35,7 +41,7 @@ RESULTS_FILE = "boot_sequence_results.txt"
 SESSION_LOG_DIR = "session_logs"
 
 DEFAULT_WORKERS = 3
-MAX_WORKERS_LIMIT = 10
+MAX_WORKERS_LIMIT = 8
 
 SSH_TIMEOUT = 20
 COMMAND_DELAY = 2
@@ -308,12 +314,26 @@ def image_exists_in_directory(connection, expected_boot_path, expected_image):
 
     for error in error_patterns:
         if error in lower_output:
-            return False, "\n### COMMAND: {}\n{}".format(command, output)
+            return False, None, "\n### COMMAND: {}\n{}".format(command, output)
 
     if expected_image.lower() in lower_output:
-        return True, "\n### COMMAND: {}\n{}".format(command, output)
+        return True, get_image_size(output, expected_image), "\n### COMMAND: {}\n{}".format(command, output)
 
-    return False, "\n### COMMAND: {}\n{}".format(command, output)
+    return False, None, "\n### COMMAND: {}\n{}".format(command, output)
+
+
+def get_image_size(dir_output, image_filename):
+    image_pattern = re.escape(image_filename)
+
+    for line in dir_output.splitlines():
+        if image_filename not in line:
+            continue
+
+        match = re.search(r"^\s*\d+\s+\S+\s+(\d+)\s+.*\s%s\s*$" % image_pattern, line)
+        if match:
+            return int(match.group(1))
+
+    return None
 
 
 def ensure_enable_mode(connection, enable_password):
@@ -460,6 +480,13 @@ def process_device(host, username, password, enable_password):
             device_result["message"] = "Unsafe expected image name: {}".format(expected_image)
             return device_result
 
+        expected_image_size = EXPECTED_IMAGE_SIZE.get(expected_image)
+
+        if expected_image_size is None:
+            device_result["status"] = "SKIPPED"
+            device_result["message"] = "Expected image size is not configured for {}.".format(expected_image)
+            return device_result
+
         # 3) Detect currently booted image
         system_image_output = run_show(connection, "show version | include System image")
 
@@ -486,7 +513,7 @@ def process_device(host, username, password, enable_password):
         )
 
         # 5) SAFELY check if expected newest image really exists
-        exists, dir_output = image_exists_in_directory(
+        exists, actual_image_size, dir_output = image_exists_in_directory(
             connection,
             expected_boot_path,
             expected_image
@@ -497,6 +524,22 @@ def process_device(host, username, password, enable_password):
         if not exists:
             device_result["status"] = "WITHOUT_IMAGE"
             device_result["message"] = "Expected image is missing: {}".format(expected_image)
+            return device_result
+
+        device_result["details"] += "\nEXPECTED IMAGE SIZE: {} bytes\n".format(expected_image_size)
+        device_result["details"] += "ACTUAL IMAGE SIZE:   {} bytes\n".format(actual_image_size)
+
+        if actual_image_size is None:
+            device_result["status"] = "WITHOUT_IMAGE"
+            device_result["message"] = "Could not detect file size for expected image: {}".format(expected_image)
+            return device_result
+
+        if actual_image_size != expected_image_size:
+            device_result["status"] = "WITHOUT_IMAGE"
+            device_result["message"] = (
+                "Expected image size mismatch for {}. Expected {} bytes, actual {} bytes."
+                .format(expected_image, expected_image_size, actual_image_size)
+            )
             return device_result
 
         # 6) Configure boot sequence
@@ -598,7 +641,7 @@ def write_results_file(all_results, hosts, boot_set, without_image, skipped, fai
         for ip in [h for h in hosts if h in boot_set]:
             f.write("{}\n".format(ip))
 
-        f.write("\nIP WITHOUT NEWEST .BIN:\n")
+        f.write("\nIP WITHOUT NEWEST .BIN / SIZE MISMATCH:\n")
         for ip in [h for h in hosts if h in without_image]:
             f.write("{}\n".format(ip))
 
@@ -742,7 +785,7 @@ def main():
     print("====================")
 
     print_section("IP WITH .BIN FILES AND BOOT SEQUENCE SET:", ordered_boot_set)
-    print_section("IP WITHOUT NEWEST .BIN:", ordered_without_image)
+    print_section("IP WITHOUT NEWEST .BIN / SIZE MISMATCH:", ordered_without_image)
     print_section("IP SKIPPED / UNKNOWN MODEL:", ordered_skipped)
     print_section("IP FAILED / CONNECTION ERROR:", ordered_failed)
 
