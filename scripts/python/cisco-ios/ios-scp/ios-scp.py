@@ -5,6 +5,7 @@ import hashlib
 import os
 import re
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -27,6 +28,8 @@ MD5_READ_TIMEOUT = 1800
 DIR_READ_TIMEOUT = 120
 
 PROGRESS_STATE = {}
+PROGRESS_LOCK = threading.Lock()
+OUTPUT_LOCK = threading.Lock()
 
 
 ENABLE_SCP_CONFIG = [
@@ -73,6 +76,15 @@ def read_hosts(filename: str) -> List[str]:
             hosts.append(line)
 
     return hosts
+
+
+def log_line(message: str = "", host: Optional[str] = None) -> None:
+    with OUTPUT_LOCK:
+        if host:
+            print(f"[{host}] {message}", flush=True)
+
+        else:
+            print(message, flush=True)
 
 
 def worker_count(value: str) -> int:
@@ -401,13 +413,71 @@ def scp_upload_progress(filename, size, sent, peername=None):
         PROGRESS_STATE.pop(key, None)
 
 
+def make_scp_log_progress(host: str):
+    def scp_log_progress(filename, size, sent, peername=None):
+        if isinstance(filename, bytes):
+            filename_text = filename.decode(errors="ignore")
+        else:
+            filename_text = str(filename)
+
+        filename_text = os.path.basename(filename_text)
+        key = f"{host}-{filename_text}-{size}"
+        now = time.monotonic()
+
+        if size == 0:
+            percent = 100
+        else:
+            percent = int((sent / size) * 100)
+
+        with PROGRESS_LOCK:
+            if key not in PROGRESS_STATE:
+                PROGRESS_STATE[key] = {
+                    "start_time": now,
+                    "last_print_time": 0,
+                    "last_print_percent": -10,
+                }
+
+            state = PROGRESS_STATE[key]
+
+            should_print = (
+                sent >= size
+                or percent >= state["last_print_percent"] + 10
+                or now - state["last_print_time"] >= 10
+            )
+
+            if not should_print:
+                return
+
+            elapsed = max(now - state["start_time"], 0.001)
+            uploaded_mb = sent / 1024 / 1024
+            total_mb = size / 1024 / 1024
+            upload_mb_per_sec = uploaded_mb / elapsed
+            upload_mbps = upload_mb_per_sec * 8
+
+            log_line(
+                f"Upload {filename_text}: {percent:3d}% "
+                f"{uploaded_mb:.1f}/{total_mb:.1f} MB "
+                f"{upload_mb_per_sec:.2f} MB/s ({upload_mbps:.2f} Mbps)",
+                host,
+            )
+
+            if sent >= size:
+                PROGRESS_STATE.pop(key, None)
+
+            else:
+                state["last_print_time"] = now
+                state["last_print_percent"] = percent
+
+    return scp_log_progress
+
+
 def verify_remote_md5(
-    connection, file_system: str, dest_file: str, expected_md5: str
+    connection, file_system: str, dest_file: str, expected_md5: str, host: str
 ) -> Tuple[bool, str]:
     remote_path = normalize_remote_path(file_system, dest_file)
     command = f"verify /md5 {remote_path}"
 
-    print(f"    Verifying MD5: {command}")
+    log_line(f"Verifying MD5: {command}", host)
 
     try:
         output = connection.send_command(
@@ -427,27 +497,29 @@ def verify_remote_md5(
     found_md5 = extract_md5(output)
 
     if not found_md5:
-        print("    MD5 result: FAIL - could not find MD5 in device output")
-        print(output)
+        log_line("MD5 result: FAIL - could not find MD5 in device output", host)
+        log_line(output, host)
         return False, "Could not find MD5 in device output"
 
     expected_md5 = expected_md5.lower()
 
-    print(f"    Expected MD5: {expected_md5}")
-    print(f"    Device MD5:   {found_md5}")
+    log_line(f"Expected MD5: {expected_md5}", host)
+    log_line(f"Device MD5:   {found_md5}", host)
 
     if found_md5 == expected_md5:
-        print("    MD5 result: PASS")
+        log_line("MD5 result: PASS", host)
         return True, ""
 
-    print("    MD5 result: FAIL")
+    log_line("MD5 result: FAIL", host)
     return False, f"MD5 mismatch: expected {expected_md5}, device returned {found_md5}"
 
 
-def check_remote_free_space(connection, file_system: str, local_file_size: int) -> bool:
+def check_remote_free_space(
+    connection, file_system: str, local_file_size: int, host: str
+) -> bool:
     command = f"dir {file_system}"
 
-    print(f"  Checking free space: {command}")
+    log_line(f"Checking free space: {command}", host)
 
     try:
         output = connection.send_command(
@@ -467,50 +539,52 @@ def check_remote_free_space(connection, file_system: str, local_file_size: int) 
     free_bytes = extract_free_bytes(output)
 
     if free_bytes is None:
-        print("  WARNING: Could not parse remote free space. Continuing.")
+        log_line("WARNING: Could not parse remote free space. Continuing.", host)
         return True
 
     free_mb = free_bytes / 1024 / 1024
     required_mb = local_file_size / 1024 / 1024
 
-    print(f"  Remote free:  {free_mb:.1f} MB")
-    print(f"  Required:     {required_mb:.1f} MB")
+    log_line(f"Remote free:  {free_mb:.1f} MB", host)
+    log_line(f"Required:     {required_mb:.1f} MB", host)
 
     if free_bytes < local_file_size:
-        print("  Free-space result: FAIL")
+        log_line("Free-space result: FAIL", host)
         return False
 
-    print("  Free-space result: PASS")
+    log_line("Free-space result: PASS", host)
     return True
 
 
-def configure_scp(connection) -> None:
-    print("  Enabling SCP...")
+def configure_scp(connection, host: str) -> None:
+    log_line("Enabling SCP...", host)
     output = connection.send_config_set(ENABLE_SCP_CONFIG)
 
     if "% Invalid input" in output:
-        print("  WARNING: Some SCP tuning commands are not supported. Continuing.")
+        log_line("WARNING: Some SCP tuning commands are not supported. Continuing.", host)
 
 
-def revert_scp_config(connection) -> None:
-    print("  Reverting SCP config...")
+def revert_scp_config(connection, host: str) -> None:
+    log_line("Reverting SCP config...", host)
     output = connection.send_config_set(REVERT_SCP_CONFIG)
 
     if "% Invalid input" in output:
-        print("  WARNING: Some revert commands are not supported. Continuing.")
+        log_line("WARNING: Some revert commands are not supported. Continuing.", host)
 
 
-def transfer_one_file(connection, job: FileJob, show_progress: bool) -> Tuple[bool, str]:
+def transfer_one_file(
+    connection, job: FileJob, host: str, progress_callback=None
+) -> Tuple[bool, str]:
     local_file_size = os.path.getsize(job.source_path)
     local_file_size_mb = local_file_size / 1024 / 1024
 
     destination = normalize_remote_path(job.file_system, job.dest_file)
 
-    print(f"  Uploading:    {job.source_path}")
-    print(f"  Destination:  {destination}")
-    print(f"  Size:         {local_file_size_mb:.1f} MB")
+    log_line(f"Uploading:    {job.source_path}", host)
+    log_line(f"Destination:  {destination}", host)
+    log_line(f"Size:         {local_file_size_mb:.1f} MB", host)
 
-    if not check_remote_free_space(connection, job.file_system, local_file_size):
+    if not check_remote_free_space(connection, job.file_system, local_file_size, host):
         return False, "Not enough remote free space"
 
     transfer_start = time.monotonic()
@@ -527,18 +601,21 @@ def transfer_one_file(connection, job: FileJob, show_progress: bool) -> Tuple[bo
         "socket_timeout": SCP_SOCKET_TIMEOUT,
     }
 
-    if show_progress:
-        file_transfer_kwargs["progress"] = scp_upload_progress
+    if progress_callback:
+        file_transfer_kwargs["progress"] = progress_callback
 
     try:
         result = file_transfer(**file_transfer_kwargs)
 
     except TypeError:
-        if not show_progress:
+        if not progress_callback:
             raise
 
-        print("  WARNING: This Netmiko version does not support live upload speed callback.")
-        print("  Uploading without live speed display...")
+        log_line(
+            "WARNING: This Netmiko version does not support live upload speed callback.",
+            host,
+        )
+        log_line("Uploading without live speed display...", host)
 
         file_transfer_kwargs.pop("progress", None)
         result = file_transfer(**file_transfer_kwargs)
@@ -549,36 +626,38 @@ def transfer_one_file(connection, job: FileJob, show_progress: bool) -> Tuple[bo
     avg_upload_mb_per_sec = local_file_size_mb / transfer_seconds
     avg_upload_mbps = avg_upload_mb_per_sec * 8
 
-    print(
-        f"  Upload speed average: {avg_upload_mb_per_sec:.2f} MB/s "
-        f"({avg_upload_mbps:.2f} Mbps)"
+    log_line(
+        f"Upload speed average: {avg_upload_mb_per_sec:.2f} MB/s "
+        f"({avg_upload_mbps:.2f} Mbps)",
+        host,
     )
-    print(f"  Upload time:          {format_seconds(transfer_seconds)}")
+    log_line(f"Upload time:          {format_seconds(transfer_seconds)}", host)
 
     if not result.get("file_transferred") and not result.get("file_exists"):
-        print(f"  SCP upload result: FAIL - {result}")
+        log_line(f"SCP upload result: FAIL - {result}", host)
         return False, f"SCP upload failed: {result}"
 
-    print("  SCP upload result: PASS")
+    log_line("SCP upload result: PASS", host)
 
     md5_ok, md5_reason = verify_remote_md5(
         connection=connection,
         file_system=job.file_system,
         dest_file=job.dest_file,
         expected_md5=job.expected_md5,
+        host=host,
     )
 
     if md5_ok:
-        print("  File result: PASS")
+        log_line("File result: PASS", host)
         return True, ""
 
-    print("  File result: FAIL")
+    log_line("File result: FAIL", host)
     return False, md5_reason or "MD5 verification failed"
 
 
 def process_host(host: str, args, jobs: List[FileJob]) -> dict:
-    print("=" * 80)
-    print(f"Connecting to device: {host}")
+    log_line("Starting device workflow", host)
+    log_line("Connecting", host)
 
     device = {
         "device_type": args.device_type,
@@ -596,27 +675,30 @@ def process_host(host: str, args, jobs: List[FileJob]) -> dict:
     try:
         connection = ConnectHandler(**device)
 
-        print(f"Connected to {host}")
+        log_line("Connected", host)
 
-        configure_scp(connection)
+        configure_scp(connection, host)
 
         for job in jobs:
-            print("-" * 80)
-
             destination = normalize_remote_path(job.file_system, job.dest_file)
 
             try:
                 ok, reason = transfer_one_file(
                     connection=connection,
                     job=job,
-                    show_progress=args.workers == 1,
+                    host=host,
+                    progress_callback=(
+                        scp_upload_progress
+                        if args.workers == 1
+                        else make_scp_log_progress(host)
+                    ),
                 )
 
             except Exception as exc:
                 ok = False
                 reason = str(exc)
                 host_error = f"{destination}: {exc}"
-                print(f"ERROR transferring file on {host}: {exc}")
+                log_line(f"ERROR transferring file: {exc}", host)
 
             file_results.append(
                 FileResult(
@@ -634,36 +716,36 @@ def process_host(host: str, args, jobs: List[FileJob]) -> dict:
                     host_error = f"{destination}: {reason or 'Upload or MD5 failed'}"
 
                 if args.stop_on_error:
-                    print("  stop-on-error enabled. Stopping file loop for this host.")
+                    log_line("stop-on-error enabled. Stopping file loop for this host.", host)
                     break
 
     except NetmikoAuthenticationException:
         host_success = False
         host_error = "Authentication failed"
-        print(f"ERROR: Authentication failed for {host}")
+        log_line("ERROR: Authentication failed", host)
 
     except NetmikoTimeoutException:
         host_success = False
         host_error = "Connection timeout"
-        print(f"ERROR: Timeout connecting to {host}")
+        log_line("ERROR: Connection timeout", host)
 
     except Exception as exc:
         host_success = False
         host_error = str(exc)
-        print(f"ERROR on {host}: {exc}")
+        log_line(f"ERROR: {exc}", host)
 
     finally:
         if connection:
             try:
-                revert_scp_config(connection)
+                revert_scp_config(connection, host)
 
             except Exception as exc:
                 host_success = False
                 host_error = f"Could not revert config: {exc}"
-                print(f"WARNING: {host_error}")
+                log_line(f"WARNING: {host_error}", host)
 
             connection.disconnect()
-            print(f"Disconnected from {host}")
+            log_line("Disconnected", host)
 
     return {
         "host": host,
