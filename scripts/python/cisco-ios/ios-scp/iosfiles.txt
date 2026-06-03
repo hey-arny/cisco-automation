@@ -1,0 +1,28 @@
+# Example:
+# /local/path/on/jumphost:store=<device_filesystem>;dest=<remote_filename>;md5=<expected_md5>
+
+
+#ISR4321/K9[16.6.1-->16.09.08]
+#/home/alistair.lang/ios/4300/isr4300-universalk9.16.09.08.SPA.bin:store=bootflash:;dest=isr4300-universalk9.16.09.08.SPA.bin;md5=b35f76c96e771f443f7a3f6211604cb2
+
+#ISR4200/4300 ROMMON
+#/home/alistair.lang/ios/4300/isr4200_4300_rommon_1612_2r_SPA.pkg:store=bootflash:;dest=isr4200_4300_rommon_1612_2r_SPA.pkg;md5=ff042bf918b0088e913de0c1c23fa891
+
+
+#ISR4400 ROMMON
+#/home/alistair.lang/ios/4400/isr4400_rommon_1612_2r_SPA.pkg:store=bootflash:;dest=isr4400_rommon_1612_2r_SPA.pkg;md5=d2df9d11c547eb80dbab4f0cc8f30ec7
+
+
+#ISR1100
+#/home/alistair.lang/ios/1100/c1100-universalk9.17.09.09.SPA.bin:store=flash:;dest=c1100-universalk9.17.09.09.SPA.bin;md5=151805f6a3a6f3d8596d2433aeef591b
+
+
+#ASR1001 ROMMON
+#/home/alistair.lang/ios/asr1001x/asr1000-rommon.173-1r.SPA.pkg:store=bootflash:;dest=asr1000-rommon.173-1r.SPA.pkg;md5=99589534e8e6b32fe43584f03f4de40e
+
+
+#Cisco_800
+/home/alistair.lang/ios/8xx/c800-universalk9-mz.SPA.159-3.M13.bin:store=flash:;dest=c800-universalk9-mz.SPA.159-3.M13.bin;md5=eed589c9309e724c101a0324ff2a5446
+
+#Cisco_900
+#/home/alistair.lang/ios/900/c900-universalk9-mz.SPA.159-3.M13.bin:store=flash:;dest=c900-universalk9-mz.SPA.159-3.M13.bin;md5=1e61f7d260f39e532badb8e6f92d2931
