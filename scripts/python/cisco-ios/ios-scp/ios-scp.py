@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
 import argparse
+import hashlib
 import os
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
@@ -18,6 +20,8 @@ HOSTS_FILE = "hosts.txt"
 IOS_FILES = "iosfiles.txt"
 SCRIPT_DIR = Path(__file__).resolve().parent
 
+DEFAULT_WORKERS = 2
+MAX_WORKERS = 5
 SCP_SOCKET_TIMEOUT = 600
 MD5_READ_TIMEOUT = 1800
 DIR_READ_TIMEOUT = 120
@@ -69,6 +73,36 @@ def read_hosts(filename: str) -> List[str]:
             hosts.append(line)
 
     return hosts
+
+
+def worker_count(value: str) -> int:
+    try:
+        number = int(value)
+
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a number from 1 to 5") from None
+
+    if number < 1 or number > MAX_WORKERS:
+        raise argparse.ArgumentTypeError(f"must be between 1 and {MAX_WORKERS}")
+
+    return number
+
+
+def prompt_worker_count() -> int:
+    while True:
+        value = input(
+            f"How many devices at the same time? "
+            f"[1-{MAX_WORKERS}, default {DEFAULT_WORKERS}]: "
+        ).strip()
+
+        if not value:
+            return DEFAULT_WORKERS
+
+        try:
+            return worker_count(value)
+
+        except argparse.ArgumentTypeError as exc:
+            print(f"ERROR: Worker count {exc}.")
 
 
 def parse_ios_files(filename: str) -> List[FileJob]:
@@ -209,6 +243,105 @@ def format_seconds(seconds: float) -> str:
     minutes = minutes % 60
 
     return f"{hours}h {minutes}m {seconds}s"
+
+
+def format_bytes(size: int) -> str:
+    size_float = float(size)
+
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size_float < 1024 or unit == "GB":
+            if unit == "B":
+                return f"{int(size_float)} {unit}"
+
+            return f"{size_float:.1f} {unit}"
+
+        size_float /= 1024
+
+    return f"{size} B"
+
+
+def calculate_file_md5(filename: str) -> str:
+    md5_hash = hashlib.md5()
+
+    with open(filename, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            md5_hash.update(chunk)
+
+    return md5_hash.hexdigest()
+
+
+def verify_local_md5(jobs: List[FileJob]) -> dict:
+    local_md5_by_source = {}
+
+    print("Checking local file MD5 values from iosfiles.txt...")
+
+    for job in jobs:
+        if job.source_path not in local_md5_by_source:
+            local_md5_by_source[job.source_path] = calculate_file_md5(job.source_path)
+
+        local_md5 = local_md5_by_source[job.source_path]
+
+        if local_md5 != job.expected_md5:
+            raise ValueError(
+                f"Local MD5 mismatch for {job.source_path}: "
+                f"iosfiles.txt has {job.expected_md5}, local file is {local_md5}"
+            )
+
+    print("Local MD5 check: PASS")
+    print()
+    return local_md5_by_source
+
+
+def print_upload_plan(
+    hosts: List[str], jobs: List[FileJob], args, local_md5_by_source: dict
+) -> None:
+    total_size = sum(os.path.getsize(job.source_path) for job in jobs)
+    total_transfer_size = total_size * len(hosts)
+
+    print("=" * 80)
+    print("UPLOAD PLAN")
+    print("=" * 80)
+    print(f"Hosts file:       {args.hosts_file}")
+    print(f"IOS files file:   {args.files_file}")
+    print(f"Device type:      {args.device_type}")
+    print(f"Devices:          {len(hosts)}")
+    print(f"Files per device: {len(jobs)}")
+    print(f"Data per device:  {format_bytes(total_size)}")
+    print(f"Total transfer:   {format_bytes(total_transfer_size)}")
+    print()
+    print("IMPORTANT: every device listed below will receive every active file below.")
+    print()
+    print("Devices:")
+
+    for index, host in enumerate(hosts, start=1):
+        print(f"  {index}. {host}")
+
+    print()
+    print("Files:")
+
+    for index, job in enumerate(jobs, start=1):
+        source_size = os.path.getsize(job.source_path)
+        destination = normalize_remote_path(job.file_system, job.dest_file)
+
+        print(f"  {index}. Source:      {job.source_path}")
+        print(f"     Destination: {destination}")
+        print(f"     Size:        {format_bytes(source_size)}")
+        print(f"     Local MD5:   {local_md5_by_source[job.source_path]}")
+        print(f"     Expected:    {job.expected_md5}")
+
+    print("=" * 80)
+
+
+def confirm_upload_plan(hosts: List[str], jobs: List[FileJob], args) -> bool:
+    local_md5_by_source = verify_local_md5(jobs)
+    print_upload_plan(hosts, jobs, args, local_md5_by_source)
+
+    if args.yes:
+        print("Upload plan confirmation skipped by --yes.")
+        return True
+
+    answer = input("Type YES to continue with this upload plan: ").strip()
+    return answer == "YES"
 
 
 def scp_upload_progress(filename, size, sent, peername=None):
@@ -367,7 +500,7 @@ def revert_scp_config(connection) -> None:
         print("  WARNING: Some revert commands are not supported. Continuing.")
 
 
-def transfer_one_file(connection, job: FileJob) -> Tuple[bool, str]:
+def transfer_one_file(connection, job: FileJob, show_progress: bool) -> Tuple[bool, str]:
     local_file_size = os.path.getsize(job.source_path)
     local_file_size_mb = local_file_size / 1024 / 1024
 
@@ -382,35 +515,33 @@ def transfer_one_file(connection, job: FileJob) -> Tuple[bool, str]:
 
     transfer_start = time.monotonic()
 
+    file_transfer_kwargs = {
+        "ssh_conn": connection,
+        "source_file": job.source_path,
+        "dest_file": job.dest_file,
+        "file_system": job.file_system,
+        "direction": "put",
+        "overwrite_file": True,
+        "disable_md5": True,
+        "verify_file": False,
+        "socket_timeout": SCP_SOCKET_TIMEOUT,
+    }
+
+    if show_progress:
+        file_transfer_kwargs["progress"] = scp_upload_progress
+
     try:
-        result = file_transfer(
-            ssh_conn=connection,
-            source_file=job.source_path,
-            dest_file=job.dest_file,
-            file_system=job.file_system,
-            direction="put",
-            overwrite_file=True,
-            disable_md5=True,
-            verify_file=False,
-            socket_timeout=SCP_SOCKET_TIMEOUT,
-            progress=scp_upload_progress,
-        )
+        result = file_transfer(**file_transfer_kwargs)
 
     except TypeError:
+        if not show_progress:
+            raise
+
         print("  WARNING: This Netmiko version does not support live upload speed callback.")
         print("  Uploading without live speed display...")
 
-        result = file_transfer(
-            ssh_conn=connection,
-            source_file=job.source_path,
-            dest_file=job.dest_file,
-            file_system=job.file_system,
-            direction="put",
-            overwrite_file=True,
-            disable_md5=True,
-            verify_file=False,
-            socket_timeout=SCP_SOCKET_TIMEOUT,
-        )
+        file_transfer_kwargs.pop("progress", None)
+        result = file_transfer(**file_transfer_kwargs)
 
     transfer_end = time.monotonic()
     transfer_seconds = max(transfer_end - transfer_start, 0.001)
@@ -475,7 +606,11 @@ def process_host(host: str, args, jobs: List[FileJob]) -> dict:
             destination = normalize_remote_path(job.file_system, job.dest_file)
 
             try:
-                ok, reason = transfer_one_file(connection, job)
+                ok, reason = transfer_one_file(
+                    connection=connection,
+                    job=job,
+                    show_progress=args.workers == 1,
+                )
 
             except Exception as exc:
                 ok = False
@@ -576,6 +711,44 @@ def print_final_summary(results) -> None:
     print("=" * 80)
 
 
+def process_hosts(hosts: List[str], args, jobs: List[FileJob]) -> List[dict]:
+    if args.workers == 1:
+        results = []
+
+        for host in hosts:
+            result = process_host(host, args, jobs)
+            results.append(result)
+
+        return results
+
+    results_by_host = {}
+    max_workers = min(args.workers, len(hosts))
+
+    print(f"Processing up to {max_workers} host(s) at the same time.")
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_host = {
+            executor.submit(process_host, host, args, jobs): host for host in hosts
+        }
+
+        for future in as_completed(future_to_host):
+            host = future_to_host[future]
+
+            try:
+                results_by_host[host] = future.result()
+
+            except Exception as exc:
+                print(f"ERROR processing {host}: {exc}")
+                results_by_host[host] = {
+                    "host": host,
+                    "success": False,
+                    "error": str(exc),
+                    "files": [],
+                }
+
+    return [results_by_host[host] for host in hosts]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Upload files to Cisco IOS/IOS-XE devices using Netmiko SCP and verify MD5."
@@ -606,14 +779,25 @@ def main() -> int:
         help="Stop processing more files on a host after first failed upload or MD5 check.",
     )
 
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip the upload plan confirmation prompt.",
+    )
+
+    parser.add_argument(
+        "-w",
+        "--workers",
+        type=worker_count,
+        default=None,
+        help=(
+            f"Number of devices to process at the same time, 1-{MAX_WORKERS}. "
+            f"If omitted, the script asks. Default answer: {DEFAULT_WORKERS}"
+        ),
+    )
+
     args = parser.parse_args()
-
-    args.username = input("Enter username: ").strip()
-    args.password = getpass("Enter password: ")
-
-    if not args.username:
-        print("ERROR: Username cannot be empty.")
-        return 1
 
     if not os.path.isfile(args.hosts_file):
         print(f"ERROR: Hosts file not found: {args.hosts_file}")
@@ -641,14 +825,29 @@ def main() -> int:
         print(f"No file jobs found in {args.files_file}")
         return 1
 
+    try:
+        upload_confirmed = confirm_upload_plan(hosts, jobs, args)
+
+    except Exception as exc:
+        print(f"ERROR during upload preflight: {exc}")
+        return 1
+
+    if not upload_confirmed:
+        print("Upload cancelled. No devices were changed.")
+        return 1
+
+    args.username = input("Enter username: ").strip()
+    args.password = getpass("Enter password: ")
+    args.workers = args.workers or prompt_worker_count()
+
+    if not args.username:
+        print("ERROR: Username cannot be empty.")
+        return 1
+
     print(f"Loaded {len(hosts)} host(s).")
     print(f"Loaded {len(jobs)} file job(s).")
 
-    results = []
-
-    for host in hosts:
-        result = process_host(host, args, jobs)
-        results.append(result)
+    results = process_hosts(hosts, args, jobs)
 
     print_final_summary(results)
 
