@@ -6,22 +6,14 @@
 
 The script reads device IP addresses from `hosts.txt`, continuously pings each device, detects when a device goes down, waits for it to come back online, and then connects by SSH to verify the running IOS image.
 
-This script does not reload devices. It only monitors devices after a reload has been started by another script or an engineer.
+The script currently supports 800, 900 (bundle mode), and 1100 family models in install mode. It can be easily updated for any model.
 
-## How It Works
+Just add your desired model and expected .bin/packages.conf version to `FAMILY_IMAGE_MAP`, and add the model variations to `MODEL_FAMILY_MAP`.
 
-For each device, the script checks:
-
-1. The device goes down.
-2. The device comes back online.
-3. SSH is available again.
-4. The running IOS image matches the expected image for the detected device model.
-
-If the running image is correct, the script logs `UPGRADED_OK`.
 
 ## Running the Script
 
-Create or update `hosts.txt` with one device IP address per line.
+Create or update `hosts.txt` with one device IP address per line. 
 
 Then run:
 
@@ -29,9 +21,7 @@ Then run:
 python3 ios-monitor.py
 ```
 
-The script will ask for your username and password, then start monitoring all devices from `hosts.txt`.
-
-Leave the script running during the reload window. Stop it with `CTRL+C` when monitoring is finished.
+Stop it with `CTRL+C`.
 
 ## Results
 
