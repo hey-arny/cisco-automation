@@ -62,6 +62,7 @@ def collect_device(net_connect):
     return {
         "Version": run_command(net_connect, "show version | include uptime|reason|bin|IOS Software"),
         "Interface status": run_command(net_connect, "show interface description | exclude down"),
+        "Duplex settings": run_command(net_connect, "sh int | i dupl|Dupl"),
         "BGPv4 status": run_command(net_connect, "show ip bgp summary | begin Neighbor", skip_invalid=True),
         "BGP VPNv4 summary": run_command(net_connect, "show ip bgp vpnv4 all summary | begin Neighbor", skip_invalid=True),
         "BGP IPv6 summary": run_command(net_connect, "show ip bgp ipv6 unicast summary | begin Neighbor", skip_invalid=True),
