@@ -14,7 +14,7 @@ from netmiko import (
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HOSTS_FILE = os.path.join(SCRIPT_DIR, "hosts.txt")
-OUTPUT_FILE = os.path.join(SCRIPT_DIR, "version-check-results.txt")
+OUTPUT_FILE = os.path.join(SCRIPT_DIR, "results-version-check.txt")
 
 
 def read_hosts(path):
