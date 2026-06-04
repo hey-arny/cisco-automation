@@ -1,9 +1,3 @@
-# cisco-automation
-
-## Repository Layout
-
-- `python/` - Python automation scripts and tools.
-- `requirements.txt` - Python dependencies.
 
 ## Installing Requirements
 
