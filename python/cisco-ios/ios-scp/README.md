@@ -1,8 +1,8 @@
 # IOS SCP Upload
 
-`ios-scp.py` uploads  any file IOS file you desire to Cisco IOS/IOS-XE devices using SCP.
+`ios-scp.py` uploads any IOS file you desire to Cisco IOS/IOS-XE devices using SCP.
 
-The script reads device IP addresses from `hosts.txt`, verifies path from what to upload in  `iosfiles.txt`, copies each active file to each device, and verifies the uploaded file with MD5.
+The script reads device IP addresses from `hosts.txt`, verifies what to upload from `iosfiles.txt`, copies each active file to each device, and verifies the uploaded file with MD5.
 
 ## What It Does
 
@@ -29,27 +29,24 @@ Add one device IP address or hostname per line:
 192.0.2.11
 ```
 
-
 ### iosfiles.txt
 
-Add one upload job per active line:
+Add one upload job per active line. You can add as many as you want.
 
 ```text
 /local/path/to/image.bin:store=flash:;dest=image.bin;md5=expectedmd5value
 ```
 
-Format:
-
-```text
-<local_file_path>:store=<device_filesystem>;dest=<remote_filename>;md5=<expected_md5>
-```
-
-`dest=` is optional. If omitted, the original local filename is used on the device.
-
-Example:
+### Active Line Example
 
 ```text
 /home/user/ios/c800-universalk9-mz.SPA.159-3.M13.bin:store=flash:;dest=c800-universalk9-mz.SPA.159-3.M13.bin;md5=eed589c9309e724c101a0324ff2a5446
+```
+
+### Inactive Line Example
+
+```text
+#/home/alistair.lang/ios/4300/isr4200_4300_rommon_1612_2r_SPA.pkg:store=bootflash:;dest=isr4200_4300_rommon_1612_2r_SPA.pkg;md5=ff042bf918b0088e913de0c1c23fa891
 ```
 
 ## Run
@@ -66,7 +63,7 @@ You will then be prompted for:
 
 - SSH username
 - SSH password
-- Number of devices to process at the same time, maximum is 5 ! 
+- Number of devices to process at the same time, maximum is 5!
 
 ## Useful Options
 
@@ -80,9 +77,7 @@ Set the number of devices processed at the same time.
 python3 ios-scp.py --yes
 ```
 
-
 ## Notes
 
-- Every non commented out  file in `iosfiles.txt` is uploaded to every active device in `hosts.txt`! 
+- Every uncommented file in `iosfiles.txt` is uploaded to every active device in `hosts.txt`!
 - A failed MD5 check marks the device as failed.
-
