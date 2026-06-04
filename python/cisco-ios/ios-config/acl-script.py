@@ -7,7 +7,6 @@ from pathlib import Path
 from netmiko import ConnectHandler
 
 
-USERNAME = "arnold.rusu"
 HOSTS_FILE = Path("hosts.txt")
 RESULTS_FILE = Path("results.txt")
 
@@ -41,14 +40,14 @@ def read_hosts(path):
     return hosts
 
 
-def process_device(ip, password):
+def process_device(ip, username, password):
     lines = [f"\nConnecting to {ip}..."]
     net_connect = None
 
     device = {
         "device_type": "cisco_ios",
         "host": ip,
-        "username": USERNAME,
+        "username": username,
         "password": password,
         "port": 22,
         "fast_cli": False,
@@ -113,6 +112,11 @@ def main():
         default=5,
         help="number of devices to process in parallel (default: 5)",
     )
+    parser.add_argument(
+        "-u",
+        "--username",
+        help="SSH username. If omitted, you will be prompted.",
+    )
     args = parser.parse_args()
 
     if args.workers < 1:
@@ -127,6 +131,11 @@ def main():
         print(f"No hosts found in {HOSTS_FILE.resolve()}")
         return 1
 
+    username = args.username or input("Username: ").strip()
+    if not username:
+        print("Username is required.")
+        return 1
+
     password = getpass("Password: ")
     workers = min(args.workers, len(hosts))
     successes = 0
@@ -137,7 +146,7 @@ def main():
 
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {
-                    executor.submit(process_device, ip, password): ip
+                    executor.submit(process_device, ip, username, password): ip
                     for ip in hosts
                 }
 
