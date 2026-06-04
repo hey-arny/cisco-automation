@@ -78,6 +78,18 @@ def read_hosts(filename: str) -> List[str]:
     return hosts
 
 
+def create_hosts_file(filename: str) -> None:
+    path = Path(filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# Add one device IP address or hostname per line.\n"
+        "# Lines starting with # are ignored.\n"
+        "# Example:\n"
+        "# 192.0.2.10\n",
+        encoding="utf-8",
+    )
+
+
 def log_line(message: str = "", host: Optional[str] = None) -> None:
     with OUTPUT_LOCK:
         if host:
@@ -882,7 +894,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if not os.path.isfile(args.hosts_file):
-        print(f"ERROR: Hosts file not found: {args.hosts_file}")
+        create_hosts_file(args.hosts_file)
+        print(f"Hosts.txt file not found, so I created one for you :) {args.hosts_file}")
+        print("Add one device IP address or hostname per line, then run the script again.")
         return 1
 
     if not os.path.isfile(args.files_file):
