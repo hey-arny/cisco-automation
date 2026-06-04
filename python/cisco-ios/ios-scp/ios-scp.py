@@ -788,13 +788,32 @@ def print_final_summary(results) -> None:
         print("=" * 80)
         return
 
-    print()
-    print("FAIL Upload or MD5 verification failed:")
+    failed_by_reason = {}
 
     for result in failed_results:
-        host = result["host"]
         reason = result.get("error") or "Unknown failure"
-        print(f"  {host}: {reason}")
+
+        if reason == "Authentication failed":
+            group = "Authentication failed"
+        elif "MD5" in reason.upper():
+            group = "MD5 verification failed"
+        else:
+            group = "Upload failed"
+
+        failed_by_reason.setdefault(group, []).append(result["host"])
+
+    for group in ["Upload failed", "MD5 verification failed", "Authentication failed"]:
+        hosts = failed_by_reason.get(group)
+
+        if not hosts:
+            continue
+
+        print()
+        print(f"FAIL {group}:")
+        print()
+
+        for host in hosts:
+            print(host)
 
     print("=" * 80)
 
