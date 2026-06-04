@@ -81,13 +81,7 @@ def read_hosts(filename: str) -> List[str]:
 def create_hosts_file(filename: str) -> None:
     path = Path(filename)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "# Add one device IP address or hostname per line.\n"
-        "# Lines starting with # are ignored.\n"
-        "# Example:\n"
-        "# 192.0.2.10\n",
-        encoding="utf-8",
-    )
+    path.touch()
 
 
 def log_line(message: str = "", host: Optional[str] = None) -> None:

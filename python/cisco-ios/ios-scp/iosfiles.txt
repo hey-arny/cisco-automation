@@ -22,7 +22,7 @@
 
 
 #Cisco_800
-/home/alistair.lang/ios/8xx/c800-universalk9-mz.SPA.159-3.M13.bin:store=flash:;dest=c800-universalk9-mz.SPA.159-3.M13.bin;md5=eed589c9309e724c101a0324ff2a5446
+#/home/alistair.lang/ios/8xx/c800-universalk9-mz.SPA.159-3.M13.bin:store=flash:;dest=c800-universalk9-mz.SPA.159-3.M13.bin;md5=eed589c9309e724c101a0324ff2a5446
 
 #Cisco_900
 #/home/alistair.lang/ios/900/c900-universalk9-mz.SPA.159-3.M13.bin:store=flash:;dest=c900-universalk9-mz.SPA.159-3.M13.bin;md5=1e61f7d260f39e532badb8e6f92d2931
