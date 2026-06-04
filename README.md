@@ -1,4 +1,3 @@
-# cisco-automation
 
 ## Installing Requirements
 
