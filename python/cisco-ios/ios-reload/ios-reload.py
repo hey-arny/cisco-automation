@@ -24,9 +24,29 @@ RELOAD_ENABLED = False
 
 # Supported boot maps
 LATEST_BOOT = {
+    # 800 models
     "C892FSP-K9": "boot system flash:c800-universalk9-mz.SPA.159-3.M13.bin",
+    "C891FSP-K9": "boot system flash:c800-universalk9-mz.SPA.159-3.M13.bin",
+    "C891F-K9":   "boot system flash:c800-universalk9-mz.SPA.159-3.M13.bin",
+    "C888EA-K9":  "boot system flash:c800-universalk9-mz.SPA.159-3.M13.bin",
+    "C888-K9":    "boot system flash:c800-universalk9-mz.SPA.159-3.M13.bin",
+
+    # 900 models
     "C921-4P":    "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
     "C931-4P":    "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
+    "C927-4P":    "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
+    "C926-4P":    "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
+    "C927-4PM":   "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
+
+    # 900 LTE models
+    "C921-4PLTEGB":  "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
+    "C921-4PLTEAU":  "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
+    "C921-4PLTEAS":  "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
+    "C927-4PLTENA":  "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
+    "C927-4PLTEGB":  "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
+    "C927-4PLTEAU":  "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
+    "C927-4PMLTEGB": "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
+    "C926-4PLTEGB":  "boot system flash:c900-universalk9-mz.SPA.159-3.M13.bin",
 }
 
 # Expected byte size of each newest image in flash. 
@@ -69,7 +89,7 @@ def run_show(net_connect, command):
 def get_pid(show_inventory):
     match = re.search(r"PID:\s*([^,\s]+)", show_inventory)
     if match:
-        return match.group(1).strip()
+        return match.group(1).strip().upper()
     return None
 
 
