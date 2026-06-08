@@ -22,6 +22,9 @@ LOG_DIR = "logs"
 # with False boolean variable script works just as pre-check!  
 RELOAD_ENABLED = False
 
+SSH_MAX_ATTEMPTS = 3
+SSH_RETRY_DELAY = 30
+
 # Supported boot maps
 LATEST_BOOT = {
     # 800 models
@@ -155,6 +158,28 @@ def reload_device(net_connect):
     return output
 
 
+def connect_with_retries(device, log):
+    last_error = None
+
+    for attempt in range(1, SSH_MAX_ATTEMPTS + 1):
+        try:
+            log_line(log, "SSH attempt %s/%s" % (attempt, SSH_MAX_ATTEMPTS))
+            return ConnectHandler(**device)
+
+        except (NetMikoAuthenticationException, NetMikoTimeoutException) as error:
+            last_error = error
+
+            if attempt < SSH_MAX_ATTEMPTS:
+                log_line(
+                    log,
+                    "SSH attempt %s/%s failed. Retrying in %s seconds."
+                    % (attempt, SSH_MAX_ATTEMPTS, SSH_RETRY_DELAY)
+                )
+                time.sleep(SSH_RETRY_DELAY)
+
+    raise last_error
+
+
 def confirm_reload_enabled():
     if not RELOAD_ENABLED:
         return
@@ -224,7 +249,7 @@ for ip in hosts:
 
         try:
             log_line(log, "Connecting to device...")
-            net_connect = ConnectHandler(**device)
+            net_connect = connect_with_retries(device, log)
             log_line(log, "Connected successfully.")
 
             # 1) Detect PID
