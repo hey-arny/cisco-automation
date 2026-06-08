@@ -155,9 +155,25 @@ def reload_device(net_connect):
     return output
 
 
+def confirm_reload_enabled():
+    if not RELOAD_ENABLED:
+        return
+
+    print("")
+    print("WARNING: RELOAD_ENABLED is set to True.")
+    print("Devices that pass all checks will be saved and reloaded automatically.")
+    answer = input("Type YES to continue, or anything else to abort: ").strip()
+
+    if answer.upper() != "YES":
+        print("Aborted. No devices were connected.")
+        raise SystemExit
+
+
 # =========================
 # MAIN SCRIPT
 # =========================
+
+confirm_reload_enabled()
 
 username = input("Enter username: ").strip()
 password = getpass("Password: ")

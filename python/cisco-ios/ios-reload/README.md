@@ -55,3 +55,4 @@ The script will check each device in `hosts.txt`. If all checks pass, it will sa
 
 Important: with `RELOAD_ENABLED = True`, the script sends the `reload` command automatically after a successful check!
 
+When `RELOAD_ENABLED = True`, the script asks for confirmation before connecting to any device. Type `YES` to continue, or any other answer to abort. The confirmation is case-insensitive, so `yes`, `Yes`, and `YES` are accepted.

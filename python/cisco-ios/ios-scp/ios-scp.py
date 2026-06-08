@@ -359,7 +359,7 @@ def confirm_upload_plan(hosts: List[str], jobs: List[FileJob], args) -> bool:
         return True
 
     answer = input("Type YES to continue with this upload plan: ").strip()
-    return answer == "YES"
+    return answer.upper() == "YES"
 
 
 def scp_upload_progress(filename, size, sent, peername=None):
