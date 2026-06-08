@@ -32,6 +32,8 @@ DOWN_THRESHOLD = 3
 UP_THRESHOLD = 3
 
 SSH_WAIT_AFTER_UP = 30
+SSH_RETRY_AFTER_FAILED = 30
+SSH_MAX_ATTEMPTS = 2
 
 
 # =========================
@@ -449,61 +451,75 @@ def verify_device(ip, event_index):
     result = None
     error = None
 
-    net_connect = None
+    for attempt in range(1, SSH_MAX_ATTEMPTS + 1):
+        net_connect = None
 
-    try:
-        device = {
-            "device_type": "cisco_ios",
-            "host": ip,
-            "username": username,
-            "password": password,
-            "port": 22,
-            "fast_cli": False,
-            "timeout": 20,
-            "banner_timeout": 15,
-            "auth_timeout": 15,
-        }
+        try:
+            if SSH_MAX_ATTEMPTS > 1:
+                log("%s SSH attempt %s/%s" % (ip, attempt, SSH_MAX_ATTEMPTS))
 
-        net_connect = ConnectHandler(**device)
+            device = {
+                "device_type": "cisco_ios",
+                "host": ip,
+                "username": username,
+                "password": password,
+                "port": 22,
+                "fast_cli": False,
+                "timeout": 20,
+                "banner_timeout": 15,
+                "auth_timeout": 15,
+            }
 
-        show_version = net_connect.send_command_timing(
-            "show version",
-            delay_factor=2,
-            max_loops=1000
-        )
+            net_connect = ConnectHandler(**device)
 
-        pid = detect_pid(show_version)
-        running_image = detect_running_image(show_version)
-        uptime = detect_uptime(show_version)
+            show_version = net_connect.send_command_timing(
+                "show version",
+                delay_factor=2,
+                max_loops=1000
+            )
 
-        if pid:
-            expected_image = get_expected_image_for_pid(pid)
+            pid = detect_pid(show_version)
+            running_image = detect_running_image(show_version)
+            uptime = detect_uptime(show_version)
 
-        if not pid:
-            result = "UNKNOWN_PID"
+            if pid:
+                expected_image = get_expected_image_for_pid(pid)
 
-        elif not expected_image:
-            result = "NO_EXPECTED_IMAGE_FOR_PID"
+            if not pid:
+                result = "UNKNOWN_PID"
 
-        elif not running_image:
-            result = "RUNNING_IMAGE_NOT_FOUND"
+            elif not expected_image:
+                result = "NO_EXPECTED_IMAGE_FOR_PID"
 
-        elif expected_image in running_image:
-            result = "UPGRADED_OK"
+            elif not running_image:
+                result = "RUNNING_IMAGE_NOT_FOUND"
 
-        else:
-            result = "WRONG_IMAGE"
+            elif expected_image in running_image:
+                result = "UPGRADED_OK"
 
-    except Exception as e:
-        result = "SSH_FAILED"
-        error = str(e)
+            else:
+                result = "WRONG_IMAGE"
 
-    finally:
-        if net_connect:
-            try:
-                net_connect.disconnect()
-            except Exception:
-                pass
+            error = None
+            break
+
+        except Exception as e:
+            result = "SSH_FAILED"
+            error = str(e)
+
+            if attempt < SSH_MAX_ATTEMPTS:
+                log(
+                    "%s SSH attempt %s/%s failed. Retrying in %s seconds."
+                    % (ip, attempt, SSH_MAX_ATTEMPTS, SSH_RETRY_AFTER_FAILED)
+                )
+                time.sleep(SSH_RETRY_AFTER_FAILED)
+
+        finally:
+            if net_connect:
+                try:
+                    net_connect.disconnect()
+                except Exception:
+                    pass
 
     log("%s PID: %s" % (ip, pid))
     log("%s Expected image: %s" % (ip, expected_image))
@@ -643,6 +659,8 @@ def main():
     log("Down threshold: %s failed pings" % DOWN_THRESHOLD)
     log("Up threshold: %s successful pings" % UP_THRESHOLD)
     log("SSH wait after UP: %s seconds" % SSH_WAIT_AFTER_UP)
+    log("SSH max attempts: %s" % SSH_MAX_ATTEMPTS)
+    log("SSH retry after failed attempt: %s seconds" % SSH_RETRY_AFTER_FAILED)
 
     for i in range(PING_WORKERS):
         t = threading.Thread(target=ping_worker)
