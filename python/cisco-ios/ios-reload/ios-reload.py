@@ -28,6 +28,7 @@ LATEST_BOOT = {
     "C892FSP-K9": "boot system flash:c800-universalk9-mz.SPA.159-3.M13.bin",
     "C891FSP-K9": "boot system flash:c800-universalk9-mz.SPA.159-3.M13.bin",
     "C891F-K9":   "boot system flash:c800-universalk9-mz.SPA.159-3.M13.bin",
+    "C891FJ-K9":  "boot system flash:c800-universalk9-mz.SPA.159-3.M13.bin",
     "C888EA-K9":  "boot system flash:c800-universalk9-mz.SPA.159-3.M13.bin",
     "C888-K9":    "boot system flash:c800-universalk9-mz.SPA.159-3.M13.bin",
 
