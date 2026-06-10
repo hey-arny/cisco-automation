@@ -53,11 +53,9 @@ def parse_args(description, default_hosts_file, default_output_file):
     )
     parser.add_argument(
         "--workers",
-        default=None,
+        default=DEFAULT_WORKERS,
         type=int,
-        help="Number of devices to check at the same time. Default prompt value: {}".format(
-            DEFAULT_WORKERS
-        ),
+        help="Number of devices to check at the same time. Default: %(default)s",
     )
     parser.add_argument(
         "--fast-cli",
@@ -100,26 +98,6 @@ def read_hosts(path):
             seen.add(host)
 
     return hosts
-
-
-def prompt_workers(default_workers):
-    while True:
-        answer = input("Workers [{}]: ".format(default_workers)).strip()
-
-        if not answer:
-            return default_workers
-
-        try:
-            workers = int(answer)
-        except ValueError:
-            print("Enter a whole number, or press Enter for {}.".format(default_workers))
-            continue
-
-        if workers < 1:
-            print("Workers must be 1 or higher.")
-            continue
-
-        return workers
 
 
 def is_closed_channel_error(output):
@@ -325,11 +303,7 @@ def run_check(description, hosts_file, output_file):
         print("No hosts found in {}.".format(args.hosts))
         return 1
 
-    requested_workers = args.workers
-    if requested_workers is None:
-        requested_workers = prompt_workers(DEFAULT_WORKERS)
-
-    workers = max(1, min(requested_workers, len(hosts)))
+    workers = max(1, min(args.workers, len(hosts)))
     print("Checking {} device(s) with {} worker(s).".format(len(hosts), workers))
 
     results_by_host = {}
