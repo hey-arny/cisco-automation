@@ -6,9 +6,12 @@ from getpass import getpass
 import os
 import time
 
-DEFAULT_WORKERS = 3
+# Default tuning for normal runs.
+# Increase workers for speed; increase delay/retries for stubborn devices.
+DEFAULT_WORKERS = 5
 DEFAULT_RETRIES = 2
 DEFAULT_DELAY_FACTOR = 1
+DEFAULT_RETRY_WAIT = 5
 SEPARATOR = "=" * 74
 SECTION_SEPARATOR = "_" * 74
 
@@ -61,7 +64,7 @@ def parse_args(description, default_hosts_file, default_output_file):
     )
     parser.add_argument(
         "--retry-wait",
-        default=5,
+        default=DEFAULT_RETRY_WAIT,
         type=int,
         help="Seconds to wait between retries. Default: %(default)s",
     )
