@@ -12,8 +12,14 @@ DEFAULT_WORKERS = 5
 DEFAULT_RETRIES = 2
 DEFAULT_DELAY_FACTOR = 1
 DEFAULT_RETRY_WAIT = 5
+SHOW_TIMER = True
 SEPARATOR = "=" * 74
 SECTION_SEPARATOR = "_" * 74
+CHANNEL_CLOSED_MESSAGE = (
+    "Device closed the SSH session during command collection. "
+    "This is usually temporary after reload or caused by a slow/busy device, "
+    "VTY/AAA limits, or too many parallel SSH sessions."
+)
 
 COMMANDS = (
     ("Version", "show version | include uptime|reason|bin|IOS Software", False),
@@ -47,9 +53,11 @@ def parse_args(description, default_hosts_file, default_output_file):
     )
     parser.add_argument(
         "--workers",
-        default=DEFAULT_WORKERS,
+        default=None,
         type=int,
-        help="Number of devices to check at the same time. Default: %(default)s",
+        help="Number of devices to check at the same time. Default prompt value: {}".format(
+            DEFAULT_WORKERS
+        ),
     )
     parser.add_argument(
         "--fast-cli",
@@ -94,6 +102,26 @@ def read_hosts(path):
     return hosts
 
 
+def prompt_workers(default_workers):
+    while True:
+        answer = input("Workers [{}]: ".format(default_workers)).strip()
+
+        if not answer:
+            return default_workers
+
+        try:
+            workers = int(answer)
+        except ValueError:
+            print("Enter a whole number, or press Enter for {}.".format(default_workers))
+            continue
+
+        if workers < 1:
+            print("Workers must be 1 or higher.")
+            continue
+
+        return workers
+
+
 def is_closed_channel_error(output):
     output_lower = output.lower()
     return (
@@ -101,6 +129,10 @@ def is_closed_channel_error(output):
         or "socket is closed" in output_lower
         or "session closed" in output_lower
     )
+
+
+class ChannelClosedError(RuntimeError):
+    pass
 
 
 def run_command(net_connect, command, skip_invalid=False, delay_factor=1):
@@ -135,7 +167,7 @@ def collect_device(net_connect, delay_factor):
         )
 
         if is_closed_channel_error(output):
-            raise RuntimeError(output)
+            raise ChannelClosedError(CHANNEL_CLOSED_MESSAGE)
 
         results.append((title, output))
 
@@ -159,6 +191,21 @@ def format_success(host, results):
 
 def format_error(message):
     return "{}\n{}\n".format(message, SEPARATOR)
+
+
+def format_duration(seconds):
+    seconds = int(round(seconds))
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    remaining_seconds = seconds % 60
+
+    if hours:
+        return "{}h {}m {}s".format(hours, minutes, remaining_seconds)
+
+    if minutes:
+        return "{}m {}s".format(minutes, remaining_seconds)
+
+    return "{}s".format(remaining_seconds)
 
 
 def check_host_once(
@@ -198,6 +245,11 @@ def check_host_once(
 
     except NetmikoTimeoutException:
         msg = "SSH timeout on {}, skipping.".format(host)
+        print(msg)
+        return format_error(msg), True
+
+    except ChannelClosedError as error:
+        msg = "SSH session closed on {}: {}".format(host, error)
         print(msg)
         return format_error(msg), True
 
@@ -273,10 +325,15 @@ def run_check(description, hosts_file, output_file):
         print("No hosts found in {}.".format(args.hosts))
         return 1
 
-    workers = max(1, min(args.workers, len(hosts)))
+    requested_workers = args.workers
+    if requested_workers is None:
+        requested_workers = prompt_workers(DEFAULT_WORKERS)
+
+    workers = max(1, min(requested_workers, len(hosts)))
     print("Checking {} device(s) with {} worker(s).".format(len(hosts), workers))
 
     results_by_host = {}
+    start_time = time.time()
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_to_host = {
@@ -305,6 +362,10 @@ def run_check(description, hosts_file, output_file):
     with open(args.output, "w") as f_out:
         for host in hosts:
             f_out.write(results_by_host[host])
+
+    if SHOW_TIMER:
+        elapsed = format_duration(time.time() - start_time)
+        print("Collecting data for {} device(s) took {}.".format(len(hosts), elapsed))
 
     print("Results saved to: {}".format(args.output))
     return 0
