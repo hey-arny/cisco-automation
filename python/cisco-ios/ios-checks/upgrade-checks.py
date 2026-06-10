@@ -4,8 +4,11 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from getpass import getpass
 import os
+import time
 
 DEFAULT_WORKERS = 3
+DEFAULT_RETRIES = 2
+DEFAULT_DELAY_FACTOR = 1
 SEPARATOR = "=" * 74
 SECTION_SEPARATOR = "_" * 74
 
@@ -50,6 +53,24 @@ def parse_args(description, default_hosts_file, default_output_file):
         action="store_true",
         help="Enable Netmiko fast_cli. Test with a small batch first on slow devices.",
     )
+    parser.add_argument(
+        "--retries",
+        default=DEFAULT_RETRIES,
+        type=int,
+        help="Connection/collection attempts per device. Default: %(default)s",
+    )
+    parser.add_argument(
+        "--retry-wait",
+        default=5,
+        type=int,
+        help="Seconds to wait between retries. Default: %(default)s",
+    )
+    parser.add_argument(
+        "--delay-factor",
+        default=DEFAULT_DELAY_FACTOR,
+        type=float,
+        help="Netmiko command delay factor for slow devices. Default: %(default)s",
+    )
     return parser.parse_args()
 
 
@@ -70,9 +91,18 @@ def read_hosts(path):
     return hosts
 
 
-def run_command(net_connect, command, skip_invalid=False):
+def is_closed_channel_error(output):
+    output_lower = output.lower()
+    return (
+        "channel stream closed" in output_lower
+        or "socket is closed" in output_lower
+        or "session closed" in output_lower
+    )
+
+
+def run_command(net_connect, command, skip_invalid=False, delay_factor=1):
     try:
-        output = net_connect.send_command(command)
+        output = net_connect.send_command(command, delay_factor=delay_factor)
         output_lower = output.lower()
 
         invalid_markers = (
@@ -90,11 +120,20 @@ def run_command(net_connect, command, skip_invalid=False):
         return "Command failed: {}".format(error)
 
 
-def collect_device(net_connect):
+def collect_device(net_connect, delay_factor):
     results = []
 
     for title, command, skip_invalid in COMMANDS:
-        output = run_command(net_connect, command, skip_invalid=skip_invalid)
+        output = run_command(
+            net_connect,
+            command,
+            skip_invalid=skip_invalid,
+            delay_factor=delay_factor,
+        )
+
+        if is_closed_channel_error(output):
+            raise RuntimeError(output)
+
         results.append((title, output))
 
     return results
@@ -119,7 +158,60 @@ def format_error(message):
     return "{}\n{}\n".format(message, SEPARATOR)
 
 
-def check_host(host, username, password, fast_cli):
+def check_host_once(
+    host,
+    username,
+    password,
+    fast_cli,
+    delay_factor,
+    ConnectHandler,
+    NetmikoAuthenticationException,
+    NetmikoTimeoutException,
+):
+    device = {
+        "device_type": "cisco_ios",
+        "host": host,
+        "username": username,
+        "password": password,
+        "port": 22,
+        "fast_cli": fast_cli,
+        "global_delay_factor": delay_factor,
+    }
+
+    net_connect = None
+
+    try:
+        net_connect = ConnectHandler(**device)
+        print("Connected to {}".format(host))
+
+        results = collect_device(net_connect, delay_factor)
+        print("Data collected for {}".format(host))
+        return format_success(host, results), False
+
+    except NetmikoAuthenticationException:
+        msg = "Authentication failed on {}, skipping.".format(host)
+        print(msg)
+        return format_error(msg), False
+
+    except NetmikoTimeoutException:
+        msg = "SSH timeout on {}, skipping.".format(host)
+        print(msg)
+        return format_error(msg), True
+
+    except Exception as error:
+        msg = "Error on {}: {}".format(host, error)
+        print(msg)
+        return format_error(msg), True
+
+    finally:
+        if net_connect:
+            try:
+                net_connect.disconnect()
+            except Exception:
+                pass
+
+
+def check_host(host, username, password, fast_cli, retries, retry_wait, delay_factor):
     try:
         from netmiko import (
             ConnectHandler,
@@ -131,43 +223,36 @@ def check_host(host, username, password, fast_cli):
         print(msg)
         return format_error(msg)
 
-    device = {
-        "device_type": "cisco_ios",
-        "host": host,
-        "username": username,
-        "password": password,
-        "port": 22,
-        "fast_cli": fast_cli,
-    }
+    attempts = max(1, retries)
+    last_result = None
 
-    net_connect = None
+    for attempt in range(1, attempts + 1):
+        if attempt > 1:
+            print(
+                "Retrying {} ({}/{}) after {} seconds.".format(
+                    host,
+                    attempt,
+                    attempts,
+                    retry_wait,
+                )
+            )
+            time.sleep(retry_wait)
 
-    try:
-        net_connect = ConnectHandler(**device)
-        print("Connected to {}".format(host))
+        last_result, should_retry = check_host_once(
+            host,
+            username,
+            password,
+            fast_cli,
+            delay_factor,
+            ConnectHandler,
+            NetmikoAuthenticationException,
+            NetmikoTimeoutException,
+        )
 
-        results = collect_device(net_connect)
-        print("Data collected for {}".format(host))
-        return format_success(host, results)
+        if not should_retry:
+            return last_result
 
-    except NetmikoAuthenticationException:
-        msg = "Authentication failed on {}, skipping.".format(host)
-        print(msg)
-        return format_error(msg)
-
-    except NetmikoTimeoutException:
-        msg = "SSH timeout on {}, skipping.".format(host)
-        print(msg)
-        return format_error(msg)
-
-    except Exception as error:
-        msg = "Error on {}: {}".format(host, error)
-        print(msg)
-        return format_error(msg)
-
-    finally:
-        if net_connect:
-            net_connect.disconnect()
+    return last_result
 
 
 def run_check(description, hosts_file, output_file):
@@ -192,7 +277,16 @@ def run_check(description, hosts_file, output_file):
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_to_host = {
-            executor.submit(check_host, host, username, password, args.fast_cli): host
+            executor.submit(
+                check_host,
+                host,
+                username,
+                password,
+                args.fast_cli,
+                args.retries,
+                args.retry_wait,
+                args.delay_factor,
+            ): host
             for host in hosts
         }
 
