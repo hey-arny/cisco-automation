@@ -379,19 +379,71 @@ def save_config(connection):
     return output
 
 
-def verify_final_boot_config(verify_output, expected_lines):
+def extract_boot_image_filename(boot_line):
     """
-    Verifies that the final running-config contains the boot lines
-    that the script wanted to configure.
+    Extracts the .bin filename from a boot system line.
+
+    IOS can display boot statements in slightly different forms, for example:
+      boot system flash:c900.bin
+      boot system flash:/c900.bin
+      boot system flash flash:c900.bin
     """
-    missing_lines = []
+    match = re.search(r"(\S+\.bin)\b", boot_line, re.IGNORECASE)
 
-    for line in expected_lines:
-        if line not in verify_output:
-            missing_lines.append(line)
+    if not match:
+        return None
 
-    if missing_lines:
-        return False, missing_lines
+    image_path = match.group(1).strip().strip('"')
+    return image_path.replace("\\", "/").split("/")[-1].split(":")[-1]
+
+
+def parse_boot_images_from_config(verify_output):
+    boot_images = []
+
+    for line in verify_output.splitlines():
+        if not re.search(r"^\s*boot\s+system\b", line, re.IGNORECASE):
+            continue
+
+        image_filename = extract_boot_image_filename(line)
+
+        if image_filename:
+            boot_images.append(image_filename)
+
+    return boot_images
+
+
+def verify_final_boot_config(verify_output, expected_images):
+    """
+    Verifies that the final running-config contains the expected boot images
+    in the expected order. This avoids false failures when IOS normalizes
+    boot system lines into a slightly different path syntax.
+    """
+    boot_images = parse_boot_images_from_config(verify_output)
+    boot_images_lower = [image.lower() for image in boot_images]
+    expected_images_lower = [image.lower() for image in expected_images]
+
+    issues = []
+
+    for image in expected_images:
+        if image.lower() not in boot_images_lower:
+            issues.append("Missing boot image: {}".format(image))
+
+    if issues:
+        return False, issues
+
+    boot_positions = [
+        boot_images_lower.index(image)
+        for image in expected_images_lower
+    ]
+
+    if boot_positions != sorted(boot_positions):
+        issues.append(
+            "Boot image order mismatch. Expected: {}. Actual: {}."
+            .format(", ".join(expected_images), ", ".join(boot_images))
+        )
+
+    if issues:
+        return False, issues
 
     return True, []
 
@@ -564,14 +616,16 @@ def process_device(host, username, password, enable_password):
             "show running-config | include ^boot system"
         )
 
-        expected_lines = []
+        expected_boot_images = []
         for command in config_commands:
             if command.startswith("boot system "):
-                expected_lines.append(command)
+                image_filename = extract_boot_image_filename(command)
+                if image_filename:
+                    expected_boot_images.append(image_filename)
 
-        verify_ok, missing_lines = verify_final_boot_config(
+        verify_ok, verify_issues = verify_final_boot_config(
             verify_output,
-            expected_lines
+            expected_boot_images
         )
 
         device_result["details"] += "\nCONFIG COMMANDS:\n{}\n".format("\n".join(config_commands))
@@ -584,7 +638,7 @@ def process_device(host, username, password, enable_password):
         if not verify_ok:
             device_result["status"] = "FAILED"
             device_result["message"] = "Final boot config does not match expected boot lines."
-            device_result["details"] += "\nMISSING BOOT LINES:\n{}\n".format("\n".join(missing_lines))
+            device_result["details"] += "\nBOOT CONFIG VERIFY ISSUES:\n{}\n".format("\n".join(verify_issues))
             return device_result
 
         device_result["status"] = "BOOT_SET"
