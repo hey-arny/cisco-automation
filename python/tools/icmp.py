@@ -97,7 +97,7 @@ with open(RESULTS_FILE, "w") as results:
     print_save(results, "Reachable IPs:")
     if reachable:
         for ip in reachable:
-            print_save(results, f"  {ip}")
+            print_save(results, ip)
     else:
         print_save(results, "  None")
 
@@ -106,6 +106,6 @@ with open(RESULTS_FILE, "w") as results:
     print_save(results, "Non-reachable IPs:")
     if non_reachable:
         for ip in non_reachable:
-            print_save(results, f"  {ip}")
+            print_save(results, ip)
     else:
         print_save(results, "  None")
