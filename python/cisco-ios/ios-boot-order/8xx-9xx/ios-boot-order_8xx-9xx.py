@@ -183,7 +183,7 @@ def detect_pid_from_inventory(output):
     Example:
       PID: C892FSP-K9        , VID: V02, SN: FCZ2137E218
     """
-    pids = re.findall(r"PID:\s*([A-Za-z0-9\-]+)", output)
+    pids = re.findall(r"PID\s*:\s*([A-Za-z0-9\-]+)", output)
 
     for pid in pids:
         pid = pid.strip().upper()
@@ -193,6 +193,14 @@ def detect_pid_from_inventory(output):
 
     if pids:
         return pids[0].strip().upper()
+
+    model_matches = re.findall(r"\bC[89][A-Za-z0-9\-]*\b", output, flags=re.IGNORECASE)
+
+    for model in model_matches:
+        model = model.strip().upper()
+
+        if re.match(r"^C[89]\d+", model):
+            return model
 
     return None
 
