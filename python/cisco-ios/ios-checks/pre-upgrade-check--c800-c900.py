@@ -7,9 +7,12 @@ import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HOSTS_FILE = os.path.join(SCRIPT_DIR, "hosts.txt")
-OUTPUT_FILE = os.path.join(SCRIPT_DIR, "results-pre-upgrade-check.txt")
+OUTPUT_FILE = os.path.join(SCRIPT_DIR, "results-pre-upgrade-check--c800-c900.txt")
 SHARED_SCRIPT = os.path.join(SCRIPT_DIR, "upgrade-checks.py")
-COMMANDS_SCRIPT = os.path.join(SCRIPT_DIR, "upgrade-checks-commands.py")
+C800_C900_COMMANDS_SCRIPT = os.path.join(
+    SCRIPT_DIR,
+    "upgrade-check-commands-c800-c900.py",
+)
 
 
 def load_script(module_name, path):
@@ -20,17 +23,14 @@ def load_script(module_name, path):
 
 
 def load_upgrade_checks():
-    spec = importlib.util.spec_from_file_location("upgrade_checks", SHARED_SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_script("upgrade_checks", SHARED_SCRIPT)
 
 
 def main():
     upgrade_checks = load_upgrade_checks()
-    command_profile = load_script("default_checks", COMMANDS_SCRIPT)
+    command_profile = load_script("c800_c900_checks", C800_C900_COMMANDS_SCRIPT)
     return upgrade_checks.run_check(
-        "Run IOS pre-upgrade checks.",
+        "Run IOS pre-upgrade checks for C800/C900.",
         HOSTS_FILE,
         OUTPUT_FILE,
         command_profile.COMMANDS,

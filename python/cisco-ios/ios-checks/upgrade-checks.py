@@ -21,23 +21,6 @@ CHANNEL_CLOSED_MESSAGE = (
     "VTY/AAA limits, or too many parallel SSH sessions."
 )
 
-COMMANDS = (
-    ("Version", "show version | include uptime|reason|bin|IOS Software", False),
-    ("Interface status", "show interface description | exclude down", False),
-    ("Duplex settings", "sh int | i dupl|Dupl", False),
-    ("BGPv4 status", "show ip bgp summary | begin Neighbor", True),
-    ("BGP VPNv4 summary", "show ip bgp vpnv4 all summary | begin Neighbor", True),
-    ("BGP IPv6 summary", "show ip bgp ipv6 unicast summary | begin Neighbor", True),
-    ("BGP VPNv6 summary", "show ip bgp vpnv6 unicast all summary | begin Neighbor", True),
-    ("Crypto session", "show crypto session brief | begin Peer", True),
-    ("HSRP status", "show standby brief all", True),
-    ("VRRP status", "show vrrp brief", True),
-    ("Switch stack status", "show switch", True),
-    ("IPv4 route summary", "show ip route summary", False),
-    ("VRF route summary", "show ip route vrf * summary", True),
-    ("IPv6 route summary", "show ipv6 route summary", True),
-)
-
 
 def parse_args(description, default_hosts_file, default_output_file):
     parser = argparse.ArgumentParser(description=description)
@@ -133,10 +116,10 @@ def run_command(net_connect, command, skip_invalid=False, delay_factor=1):
         return "Command failed: {}".format(error)
 
 
-def collect_device(net_connect, delay_factor):
+def collect_device(net_connect, delay_factor, commands):
     results = []
 
-    for title, command, skip_invalid in COMMANDS:
+    for title, command, skip_invalid in commands:
         output = run_command(
             net_connect,
             command,
@@ -192,6 +175,7 @@ def check_host_once(
     password,
     fast_cli,
     delay_factor,
+    commands,
     ConnectHandler,
     NetmikoAuthenticationException,
     NetmikoTimeoutException,
@@ -212,7 +196,7 @@ def check_host_once(
         net_connect = ConnectHandler(**device)
         print("Connected to {}".format(host))
 
-        results = collect_device(net_connect, delay_factor)
+        results = collect_device(net_connect, delay_factor, commands)
         print("Data collected for {}".format(host))
         return format_success(host, results), False
 
@@ -244,7 +228,16 @@ def check_host_once(
                 pass
 
 
-def check_host(host, username, password, fast_cli, retries, retry_wait, delay_factor):
+def check_host(
+    host,
+    username,
+    password,
+    fast_cli,
+    retries,
+    retry_wait,
+    delay_factor,
+    commands,
+):
     try:
         from netmiko import (
             ConnectHandler,
@@ -277,6 +270,7 @@ def check_host(host, username, password, fast_cli, retries, retry_wait, delay_fa
             password,
             fast_cli,
             delay_factor,
+            commands,
             ConnectHandler,
             NetmikoAuthenticationException,
             NetmikoTimeoutException,
@@ -288,7 +282,7 @@ def check_host(host, username, password, fast_cli, retries, retry_wait, delay_fa
     return last_result
 
 
-def run_check(description, hosts_file, output_file):
+def run_check(description, hosts_file, output_file, commands):
     args = parse_args(description, hosts_file, output_file)
 
     if not os.path.exists(args.hosts):
@@ -320,6 +314,7 @@ def run_check(description, hosts_file, output_file):
                 args.retries,
                 args.retry_wait,
                 args.delay_factor,
+                commands,
             ): host
             for host in hosts
         }
