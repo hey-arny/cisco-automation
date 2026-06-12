@@ -24,6 +24,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_WORKERS = 2
 MAX_WORKERS = 8
 SCP_SOCKET_TIMEOUT = 600
+DEFAULT_SCP_RETRIES = 1
+DEFAULT_SCP_RETRY_DELAY = 15
 MD5_READ_TIMEOUT = 1800
 DIR_READ_TIMEOUT = 120
 
@@ -102,6 +104,19 @@ def worker_count(value: str) -> int:
 
     if number < 1 or number > MAX_WORKERS:
         raise argparse.ArgumentTypeError(f"must be between 1 and {MAX_WORKERS}")
+
+    return number
+
+
+def non_negative_int(value: str) -> int:
+    try:
+        number = int(value)
+
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a non-negative number") from None
+
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative number")
 
     return number
 
@@ -326,6 +341,7 @@ def print_upload_plan(
     print(f"Files per device: {len(jobs)}")
     print(f"Data per device:  {format_bytes(total_size)}")
     print(f"Total transfer:   {format_bytes(total_transfer_size)}")
+    print(f"SCP retries:      {args.scp_retries}")
     print()
     print("IMPORTANT: every device listed below will receive every active file below.")
     print()
@@ -477,6 +493,85 @@ def make_scp_log_progress(host: str):
     return scp_log_progress
 
 
+def clear_scp_progress_state(host: str, filename: str, size: int) -> None:
+    filename = os.path.basename(filename)
+    keys = [
+        f"{filename}-{size}",
+        f"{host}-{filename}-{size}",
+    ]
+
+    with PROGRESS_LOCK:
+        for key in keys:
+            PROGRESS_STATE.pop(key, None)
+
+
+def is_retryable_scp_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    retryable_fragments = [
+        "authentication failed",
+        "timed out",
+        "timeout",
+        "socket",
+        "channel",
+        "connection reset",
+        "connection closed",
+        "connection lost",
+        "ssh session not active",
+        "session is down",
+    ]
+
+    return any(fragment in message for fragment in retryable_fragments)
+
+
+def run_file_transfer_with_retry(
+    file_transfer_kwargs: dict,
+    host: str,
+    filename: str,
+    size: int,
+    retries: int,
+    retry_delay: int,
+) -> dict:
+    attempts = retries + 1
+    progress_supported = "progress" in file_transfer_kwargs
+
+    for attempt in range(1, attempts + 1):
+        if attempt > 1:
+            clear_scp_progress_state(host, filename, size)
+            log_line(f"Retrying SCP upload, attempt {attempt}/{attempts}...", host)
+
+        try:
+            try:
+                return file_transfer(**file_transfer_kwargs)
+
+            except TypeError:
+                if not progress_supported or "progress" not in file_transfer_kwargs:
+                    raise
+
+                log_line(
+                    "WARNING: This Netmiko version does not support live upload speed callback.",
+                    host,
+                )
+                log_line("Uploading without live speed display...", host)
+
+                file_transfer_kwargs.pop("progress", None)
+                progress_supported = False
+
+                return file_transfer(**file_transfer_kwargs)
+
+        except Exception as exc:
+            if attempt >= attempts or not is_retryable_scp_error(exc):
+                raise
+
+            log_line(
+                f"WARNING: SCP upload attempt {attempt}/{attempts} failed: {exc}",
+                host,
+            )
+            log_line(f"Waiting {retry_delay}s before retry...", host)
+            time.sleep(retry_delay)
+
+    raise RuntimeError("SCP upload retry loop exited unexpectedly")
+
+
 def verify_remote_md5(
     connection, file_system: str, dest_file: str, expected_md5: str, host: str
 ) -> Tuple[bool, str]:
@@ -579,7 +674,12 @@ def revert_scp_config(connection, host: str) -> None:
 
 
 def transfer_one_file(
-    connection, job: FileJob, host: str, progress_callback=None
+    connection,
+    job: FileJob,
+    host: str,
+    progress_callback=None,
+    scp_retries: int = DEFAULT_SCP_RETRIES,
+    scp_retry_delay: int = DEFAULT_SCP_RETRY_DELAY,
 ) -> Tuple[bool, str]:
     local_file_size = os.path.getsize(job.source_path)
     local_file_size_mb = local_file_size / 1024 / 1024
@@ -610,21 +710,14 @@ def transfer_one_file(
     if progress_callback:
         file_transfer_kwargs["progress"] = progress_callback
 
-    try:
-        result = file_transfer(**file_transfer_kwargs)
-
-    except TypeError:
-        if not progress_callback:
-            raise
-
-        log_line(
-            "WARNING: This Netmiko version does not support live upload speed callback.",
-            host,
-        )
-        log_line("Uploading without live speed display...", host)
-
-        file_transfer_kwargs.pop("progress", None)
-        result = file_transfer(**file_transfer_kwargs)
+    result = run_file_transfer_with_retry(
+        file_transfer_kwargs=file_transfer_kwargs,
+        host=host,
+        filename=job.source_path,
+        size=local_file_size,
+        retries=scp_retries,
+        retry_delay=scp_retry_delay,
+    )
 
     transfer_end = time.monotonic()
     transfer_seconds = max(transfer_end - transfer_start, 0.001)
@@ -698,6 +791,8 @@ def process_host(host: str, args, jobs: List[FileJob]) -> dict:
                         if args.workers == 1
                         else make_scp_log_progress(host)
                     ),
+                    scp_retries=args.scp_retries,
+                    scp_retry_delay=args.scp_retry_delay,
                 )
 
             except Exception as exc:
@@ -902,6 +997,23 @@ def main() -> int:
             f"Number of devices to process at the same time, 1-{MAX_WORKERS}. "
             f"If omitted, the script asks. Default answer: {DEFAULT_WORKERS}"
         ),
+    )
+
+    parser.add_argument(
+        "--scp-retries",
+        type=non_negative_int,
+        default=DEFAULT_SCP_RETRIES,
+        help=(
+            "Retry a failed SCP upload this many times when the SCP channel has a "
+            f"transient auth/timeout/socket failure. Default: {DEFAULT_SCP_RETRIES}"
+        ),
+    )
+
+    parser.add_argument(
+        "--scp-retry-delay",
+        type=non_negative_int,
+        default=DEFAULT_SCP_RETRY_DELAY,
+        help=f"Seconds to wait between SCP upload retries. Default: {DEFAULT_SCP_RETRY_DELAY}",
     )
 
     args = parser.parse_args()
