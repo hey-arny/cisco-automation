@@ -5,7 +5,6 @@ from getpass import getpass
 import os
 import re
 import sys
-import time
 
 try:
     from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
@@ -621,7 +620,7 @@ def process_device(host, username, password, enable_password):
 
         verify_output = run_show(
             connection,
-            "show running-config | include ^boot system"
+            "show running-config | include boot system"
         )
 
         expected_boot_images = []
@@ -645,7 +644,10 @@ def process_device(host, username, password, enable_password):
 
         if not verify_ok:
             device_result["status"] = "FAILED"
-            device_result["message"] = "Final boot config does not match expected boot lines."
+            device_result["message"] = (
+                "Final boot config does not match expected boot lines: {}"
+                .format("; ".join(verify_issues))
+            )
             device_result["details"] += "\nBOOT CONFIG VERIFY ISSUES:\n{}\n".format("\n".join(verify_issues))
             return device_result
 
@@ -770,8 +772,6 @@ def main():
     failed = []
     all_results = []
 
-    start_time = time.time()
-
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_host = {}
 
@@ -860,11 +860,8 @@ def main():
         ordered_failed
     )
 
-    duration = int(time.time() - start_time)
-
     print("\nDetailed results saved to: {}".format(RESULTS_FILE))
     print("Session logs saved in: ./{}".format(SESSION_LOG_DIR))
-    print("Finished in {} seconds.".format(duration))
 
 
 if __name__ == "__main__":
