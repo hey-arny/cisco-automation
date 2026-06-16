@@ -123,6 +123,14 @@ def get_boot_filename(boot_line):
     return None
 
 
+def get_image_filename(image_path):
+    if not image_path:
+        return None
+
+    image_path = image_path.strip().strip('"')
+    return image_path.replace("\\", "/").split("/")[-1].split(":")[-1]
+
+
 def get_image_size(dir_output, image_filename):
     image_pattern = re.escape(image_filename)
 
@@ -280,8 +288,21 @@ for ip in hosts:
                 continue
 
             expected_current_boot = "boot system %s" % current_image
+            expected_new_filename = get_boot_filename(expected_new_boot)
+            current_filename = get_image_filename(current_image)
+            current_is_latest = (
+                expected_new_filename is not None
+                and current_filename is not None
+                and current_filename.lower() == expected_new_filename.lower()
+            )
+
             log_line(log, "Current running image: %s" % current_image)
-            log_line(log, "Expected second boot line: %s" % expected_current_boot)
+            if current_is_latest:
+                log_line(log, "Current image is already the newest expected image.")
+                log_line(log, "PASS: Device is already upgraded. Skipping boot order, image file, save, and reload checks.")
+                continue
+            else:
+                log_line(log, "Expected second boot line: %s" % expected_current_boot)
 
             # 3) Read configured boot sequence
             show_boot = run_show(net_connect, "show running-config | section boot")
@@ -311,8 +332,6 @@ for ip in hosts:
                 continue
 
             # 6) Validate newest image exists in flash and has expected size
-            expected_new_filename = get_boot_filename(expected_new_boot)
-
             if not expected_new_filename:
                 log_line(log, "FAIL: Could not detect newest image filename from expected boot line.")
                 continue
